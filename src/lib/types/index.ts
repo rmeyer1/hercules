@@ -30,3 +30,4 @@ export type { ExpirationCandidate, ExpirationRanked, ExpirationRankingConfig } f
 export type { ExplanationInput, ExplanationResult } from "./explain";
 export type { PositionSizingInput, PositionSizingResult } from "./sizing";
 export type { PositionExposure, ConcentrationConfig, ConcentrationResult } from "./concentration";
+export type { QualifyRequest, QualifyResponse, QualifiedCandidate, DisqualifiedTicker } from "./qualify";

@@ -4,7 +4,7 @@ import type { StrikeCandidate, StrikeFinderConfig, StrikeFinderReason } from "@/
 const DEFAULT_CONFIG: StrikeFinderConfig = {
   minOtmPct: 0.15,
   maxOtmPct: 0.2,
-  allowAtm: false,
+  allowAtm: process.env.STRIKE_ALLOW_ATM === "true",
   cspDeltaMin: 0.15,
   cspDeltaMax: 0.25,
   spreadDeltaMin: 0.1,

@@ -25,3 +25,4 @@ export type {
 export type { VolatilityMetrics } from "./volatility";
 export type { MarketRegime, TrendMetrics, TrendScoreResult } from "./trend";
 export type { StrategySelectionInput, StrategySelectionResult } from "./strategy";
+export type { StrikeCandidate, StrikeFinderConfig, StrikeFinderReason } from "./strike";

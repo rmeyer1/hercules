@@ -1,4 +1,6 @@
 import type { TradeCandidate, UniverseFilters } from "@/src/lib/types";
+import { CalendarProvider } from "@/src/lib/providers/calendar";
+import { deriveCalendarRiskFlags } from "@/src/lib/risk/flags";
 
 const defaultFilters: UniverseFilters = {
   minAvgVolume: 1_000_000,
@@ -40,8 +42,16 @@ const sampleCandidate: TradeCandidate = {
 };
 
 export async function GET() {
+  const calendarProvider = new CalendarProvider();
+  const calendar = await calendarProvider.getCalendarSnapshot(sampleCandidate.ticker);
+  const calendarFlags = deriveCalendarRiskFlags(calendar);
+
   return Response.json({
     filters: defaultFilters,
-    candidate: sampleCandidate
+    candidate: {
+      ...sampleCandidate,
+      riskFlags: Array.from(new Set([...sampleCandidate.riskFlags, ...calendarFlags]))
+    },
+    calendar
   });
 }

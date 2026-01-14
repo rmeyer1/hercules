@@ -1,0 +1,22 @@
+export type Fundamentals = {
+  symbol: string;
+  companyName: string | null;
+  marketCap: number | null;
+  sector: string | null;
+  industry: string | null;
+  beta: number | null;
+  peRatio: number | null;
+  epsTtm: number | null;
+  grossMargin: number | null;
+  operatingMargin: number | null;
+  netMargin: number | null;
+  returnOnEquity: number | null;
+  returnOnAssets: number | null;
+  debtToEquity: number | null;
+  currentRatio: number | null;
+  quickRatio: number | null;
+  totalDebt: number | null;
+  totalCash: number | null;
+  revenueTtm: number | null;
+  freeCashFlowTtm: number | null;
+};

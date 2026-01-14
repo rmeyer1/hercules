@@ -1,4 +1,5 @@
 import type { CalendarSnapshot, EarningsInfo, MacroEvent, MacroEventType } from "@/src/lib/types";
+import { withCache } from "@/src/lib/cache/memory";
 
 const DEFAULT_BASE_URL = "https://financialmodelingprep.com";
 const MACRO_HORIZON_DAYS = 14;
@@ -81,72 +82,83 @@ export class CalendarProvider {
     }
 
     const toDate = new Date(now.getTime() + horizonDays * 24 * 60 * 60 * 1000);
-    const payload = await this.request<Array<Record<string, unknown>>>(
-      `/api/v3/economic_calendar`,
-      { from: formatDate(now), to: formatDate(toDate) }
-    );
+    const fromKey = formatDate(now);
+    const toKey = formatDate(toDate);
+    const cacheKey = `macro:${fromKey}:${toKey}`;
+    const ttlMs = 12 * 60 * 60 * 1000;
 
-    if (!payload || payload.length === 0) {
-      return [];
-    }
+    return withCache(cacheKey, ttlMs, async () => {
+      const payload = await this.request<Array<Record<string, unknown>>>(
+        `/api/v3/economic_calendar`,
+        { from: fromKey, to: toKey }
+      );
 
-    return payload
-      .map((row) => {
-        const label =
-          (row.event as string | undefined) ??
-          (row.name as string | undefined) ??
-          (row.title as string | undefined);
-        if (!label) return null;
+      if (!payload || payload.length === 0) {
+        return [];
+      }
 
-        const type = this.mapMacroEventType(label);
-        if (!type) return null;
+      return payload
+        .map((row) => {
+          const label =
+            (row.event as string | undefined) ??
+            (row.name as string | undefined) ??
+            (row.title as string | undefined);
+          if (!label) return null;
 
-        const date =
-          (row.date as string | undefined) ??
-          (row.eventDate as string | undefined) ??
-          (row.dateTime as string | undefined);
-        const eventDate = parseDate(date);
-        if (!eventDate) return null;
+          const type = this.mapMacroEventType(label);
+          if (!type) return null;
 
-        const delta = diffInDays(now, eventDate);
-        if (delta < 0 || delta > horizonDays) return null;
+          const date =
+            (row.date as string | undefined) ??
+            (row.eventDate as string | undefined) ??
+            (row.dateTime as string | undefined);
+          const eventDate = parseDate(date);
+          if (!eventDate) return null;
 
-        return {
-          type,
-          date: formatDate(eventDate),
-          label
-        } satisfies MacroEvent;
-      })
-      .filter((event): event is MacroEvent => Boolean(event));
+          const delta = diffInDays(now, eventDate);
+          if (delta < 0 || delta > horizonDays) return null;
+
+          return {
+            type,
+            date: formatDate(eventDate),
+            label
+          } satisfies MacroEvent;
+        })
+        .filter((event): event is MacroEvent => Boolean(event));
+    });
   }
 
   private async getEarningsInfo(symbol: string, now: Date): Promise<EarningsInfo> {
     const from = formatDate(now);
     const to = formatDate(new Date(now.getFullYear() + 1, now.getMonth(), now.getDate()));
+    const cacheKey = `earnings:${symbol}:${from}`;
+    const ttlMs = 6 * 60 * 60 * 1000;
 
-    const payload = await this.request<Array<Record<string, unknown>>>(
-      `/api/v3/earning_calendar`,
-      { symbol, from, to }
-    );
+    return withCache(cacheKey, ttlMs, async () => {
+      const payload = await this.request<Array<Record<string, unknown>>>(
+        `/api/v3/earning_calendar`,
+        { symbol, from, to }
+      );
 
-    if (!payload || payload.length === 0) {
-      return { earningsDate: null, daysToEarnings: null };
-    }
+      if (!payload || payload.length === 0) {
+        return { earningsDate: null, daysToEarnings: null };
+      }
 
-    const nextEarnings = payload
-      .map((row) => parseDate(row.date as string | undefined))
-      .filter((date): date is Date => Boolean(date))
-      .sort((a, b) => a.getTime() - b.getTime())
-      .find((date) => date.getTime() >= now.getTime());
+      const nextEarnings = payload
+        .map((row) => parseDate(row.date as string | undefined))
+        .filter((date): date is Date => Boolean(date))
+        .sort((a, b) => a.getTime() - b.getTime())
+        .find((date) => date.getTime() >= now.getTime());
 
-    if (!nextEarnings) {
-      return { earningsDate: null, daysToEarnings: null };
-    }
+      if (!nextEarnings) {
+        return { earningsDate: null, daysToEarnings: null };
+      }
 
-    return {
-      earningsDate: formatDate(nextEarnings),
-      daysToEarnings: diffInDays(now, nextEarnings)
-    };
+      return {
+        earningsDate: formatDate(nextEarnings),
+        daysToEarnings: diffInDays(now, nextEarnings)
+      };
+    });
   }
 
   async getCalendarSnapshot(symbol: string): Promise<CalendarSnapshot> {

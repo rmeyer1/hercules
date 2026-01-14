@@ -1,4 +1,5 @@
 import type { Fundamentals } from "@/src/lib/types";
+import { withCache } from "@/src/lib/cache/memory";
 
 const DEFAULT_BASE_URL = "https://financialmodelingprep.com";
 
@@ -60,46 +61,52 @@ export class FmpClient {
 
   async getFundamentals(symbol: string): Promise<Fundamentals> {
     const safeSymbol = symbol.toUpperCase();
+    const cacheKey = `fundamentals:${safeSymbol}`;
+    const ttlMs = 12 * 60 * 60 * 1000;
 
-    const [profile, keyMetrics, ratios] = await Promise.all([
-      this.request<Array<Record<string, unknown>>>({
-        path: `/api/v3/profile/${safeSymbol}`
-      }).catch(() => []),
-      this.request<Array<Record<string, unknown>>>({
-        path: `/api/v3/key-metrics-ttm/${safeSymbol}`
-      }).catch(() => []),
-      this.request<Array<Record<string, unknown>>>({
-        path: `/api/v3/ratios-ttm/${safeSymbol}`
-      }).catch(() => [])
-    ]);
+    return withCache(cacheKey, ttlMs, async () => {
+      const [profile, keyMetrics, ratios] = await Promise.all([
+        this.request<Array<Record<string, unknown>>>({
+          path: `/api/v3/profile/${safeSymbol}`
+        }).catch(() => []),
+        this.request<Array<Record<string, unknown>>>({
+          path: `/api/v3/key-metrics-ttm/${safeSymbol}`
+        }).catch(() => []),
+        this.request<Array<Record<string, unknown>>>({
+          path: `/api/v3/ratios-ttm/${safeSymbol}`
+        }).catch(() => [])
+      ]);
 
-    const profileRow = profile[0] ?? {};
-    const metricsRow = keyMetrics[0] ?? {};
-    const ratiosRow = ratios[0] ?? {};
+      const profileRow = profile[0] ?? {};
+      const metricsRow = keyMetrics[0] ?? {};
+      const ratiosRow = ratios[0] ?? {};
 
-    return {
-      symbol: safeSymbol,
-      companyName: coerceString(profileRow.companyName),
-      marketCap: coerceNumber(profileRow.mktCap ?? profileRow.marketCap),
-      sector: coerceString(profileRow.sector),
-      industry: coerceString(profileRow.industry),
-      beta: coerceNumber(profileRow.beta),
-      peRatio: coerceNumber(profileRow.pe ?? profileRow.peRatio),
-      epsTtm: coerceNumber(profileRow.eps ?? profileRow.epsTTM),
-      grossMargin: coerceNumber(ratiosRow.grossProfitMarginTTM),
-      operatingMargin: coerceNumber(ratiosRow.operatingProfitMarginTTM),
-      netMargin: coerceNumber(ratiosRow.netProfitMarginTTM),
-      returnOnEquity: coerceNumber(metricsRow.roeTTM ?? ratiosRow.returnOnEquityTTM),
-      returnOnAssets: coerceNumber(metricsRow.roaTTM ?? ratiosRow.returnOnAssetsTTM),
-      debtToEquity: coerceNumber(metricsRow.debtToEquityTTM ?? ratiosRow.debtEquityRatioTTM),
-      currentRatio: coerceNumber(metricsRow.currentRatioTTM ?? ratiosRow.currentRatioTTM),
-      quickRatio: coerceNumber(metricsRow.quickRatioTTM ?? ratiosRow.quickRatioTTM),
-      totalDebt: coerceNumber(metricsRow.totalDebtTTM ?? metricsRow.totalDebt),
-      totalCash: coerceNumber(metricsRow.cashAndCashEquivalentsTTM ?? metricsRow.cashAndCashEquivalents),
-      revenueTtm: coerceNumber(metricsRow.revenueTTM ?? metricsRow.revenuePerShareTTM),
-      freeCashFlowTtm: coerceNumber(
-        metricsRow.freeCashFlowTTM ?? metricsRow.freeCashFlowPerShareTTM
-      )
-    };
+      return {
+        symbol: safeSymbol,
+        companyName: coerceString(profileRow.companyName),
+        marketCap: coerceNumber(profileRow.mktCap ?? profileRow.marketCap),
+        sector: coerceString(profileRow.sector),
+        industry: coerceString(profileRow.industry),
+        beta: coerceNumber(profileRow.beta),
+        peRatio: coerceNumber(profileRow.pe ?? profileRow.peRatio),
+        epsTtm: coerceNumber(profileRow.eps ?? profileRow.epsTTM),
+        grossMargin: coerceNumber(ratiosRow.grossProfitMarginTTM),
+        operatingMargin: coerceNumber(ratiosRow.operatingProfitMarginTTM),
+        netMargin: coerceNumber(ratiosRow.netProfitMarginTTM),
+        returnOnEquity: coerceNumber(metricsRow.roeTTM ?? ratiosRow.returnOnEquityTTM),
+        returnOnAssets: coerceNumber(metricsRow.roaTTM ?? ratiosRow.returnOnAssetsTTM),
+        debtToEquity: coerceNumber(metricsRow.debtToEquityTTM ?? ratiosRow.debtEquityRatioTTM),
+        currentRatio: coerceNumber(metricsRow.currentRatioTTM ?? ratiosRow.currentRatioTTM),
+        quickRatio: coerceNumber(metricsRow.quickRatioTTM ?? ratiosRow.quickRatioTTM),
+        totalDebt: coerceNumber(metricsRow.totalDebtTTM ?? metricsRow.totalDebt),
+        totalCash: coerceNumber(
+          metricsRow.cashAndCashEquivalentsTTM ?? metricsRow.cashAndCashEquivalents
+        ),
+        revenueTtm: coerceNumber(metricsRow.revenueTTM ?? metricsRow.revenuePerShareTTM),
+        freeCashFlowTtm: coerceNumber(
+          metricsRow.freeCashFlowTTM ?? metricsRow.freeCashFlowPerShareTTM
+        )
+      };
+    });
   }
 }

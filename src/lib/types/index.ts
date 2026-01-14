@@ -27,3 +27,4 @@ export type { MarketRegime, TrendMetrics, TrendScoreResult } from "./trend";
 export type { StrategySelectionInput, StrategySelectionResult } from "./strategy";
 export type { StrikeCandidate, StrikeFinderConfig, StrikeFinderReason } from "./strike";
 export type { ExpirationCandidate, ExpirationRanked, ExpirationRankingConfig } from "./expiry";
+export type { ExplanationInput, ExplanationResult } from "./explain";

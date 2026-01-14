@@ -22,3 +22,4 @@ export type {
   LiquidityDisqualificationCode,
   LiquidityGateResult
 } from "./liquidity";
+export type { VolatilityMetrics } from "./volatility";

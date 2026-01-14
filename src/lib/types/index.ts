@@ -24,3 +24,4 @@ export type {
 } from "./liquidity";
 export type { VolatilityMetrics } from "./volatility";
 export type { MarketRegime, TrendMetrics, TrendScoreResult } from "./trend";
+export type { StrategySelectionInput, StrategySelectionResult } from "./strategy";

@@ -5,4 +5,5 @@ export type RiskFlag =
   | "LOW_OI"
   | "VOLATILITY_SPIKE"
   | "RISK_IV_SPIKE"
+  | "RISK_TREND_CONFLICT"
   | "CORRELATED_EXPOSURE";

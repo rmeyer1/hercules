@@ -23,3 +23,4 @@ export type {
   LiquidityGateResult
 } from "./liquidity";
 export type { VolatilityMetrics } from "./volatility";
+export type { MarketRegime, TrendMetrics, TrendScoreResult } from "./trend";

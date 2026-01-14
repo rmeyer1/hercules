@@ -1,5 +1,13 @@
-import type { Fundamentals, LiquidityGateResult, RiskFlag, ScoreBreakdown } from "@/src/lib/types";
+import type {
+  Fundamentals,
+  LiquidityGateResult,
+  RiskFlag,
+  ScoreBreakdown,
+  TrendMetrics,
+  VolatilityMetrics
+} from "@/src/lib/types";
 import { scoreVolatilityQuality } from "@/src/lib/scoring/volatility";
+import { deriveRegime, scoreTrendSafety } from "@/src/lib/scoring/trend";
 
 export type ScoreInput = {
   fundamentals: Fundamentals | null;
@@ -7,6 +15,8 @@ export type ScoreInput = {
   impliedVol: number | null;
   ivChangeRate: number | null;
   trendScore: number | null;
+  stockTrend: TrendMetrics | null;
+  marketTrend: TrendMetrics | null;
   eventRiskFlags: RiskFlag[];
 };
 
@@ -23,6 +33,7 @@ export type ScoreResult = {
   breakdown: ScoreBreakdown;
   riskFlags: RiskFlag[];
   interpretation: "HIGH" | "ACCEPTABLE" | "PASS";
+  volatility: VolatilityMetrics;
 };
 
 export const DEFAULT_SCORE_CONFIG: ScoreConfig = {
@@ -54,7 +65,17 @@ const scoreLiquidity = (liquidityGate: LiquidityGateResult | null, weight: numbe
   return liquidityGate.passed ? weight : weight * 0.2;
 };
 
-const scoreTechnical = (trendScore: number | null, weight: number) => {
+const scoreTechnical = (
+  trendScore: number | null,
+  stockTrend: TrendMetrics | null,
+  marketTrend: TrendMetrics | null,
+  weight: number
+) => {
+  if (stockTrend && marketTrend) {
+    const marketRegime = deriveRegime(marketTrend);
+    const trendOutput = scoreTrendSafety(stockTrend, marketRegime);
+    return clamp(trendOutput.score, 0, 1) * weight;
+  }
   if (trendScore === null) return weight * 0.5;
   const normalized = clamp(trendScore, 0, 1);
   return normalized * weight;
@@ -83,10 +104,19 @@ export const scoreCandidate = (
     0,
     config.volatilityWeight
   );
-  const technicalScore = scoreTechnical(input.trendScore, config.technicalWeight);
+  const technicalScore = scoreTechnical(
+    input.trendScore,
+    input.stockTrend,
+    input.marketTrend,
+    config.technicalWeight
+  );
   const eventScore = scoreEventRisk(input.eventRiskFlags, config.eventWeight);
+  const trendFlags =
+    input.stockTrend && input.marketTrend
+      ? scoreTrendSafety(input.stockTrend, deriveRegime(input.marketTrend)).riskFlags
+      : [];
   const riskFlags = Array.from(
-    new Set([...input.eventRiskFlags, ...volatilityQuality.riskFlags])
+    new Set([...input.eventRiskFlags, ...volatilityQuality.riskFlags, ...trendFlags])
   );
 
   const total = clamp(
@@ -108,6 +138,7 @@ export const scoreCandidate = (
     total: breakdown.total,
     breakdown,
     riskFlags,
-    interpretation: interpretScore(breakdown.total)
+    interpretation: interpretScore(breakdown.total),
+    volatility: volatilityQuality.metrics
   };
 };

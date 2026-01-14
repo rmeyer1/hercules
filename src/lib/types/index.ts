@@ -6,3 +6,4 @@ export type { TradeCandidate } from "./trade";
 export type { UniverseFilters, UserPreferences } from "./filters";
 export type { StockQuote, StockTrade } from "./market";
 export type { Fundamentals } from "./fundamentals";
+export type { CalendarSnapshot, EarningsInfo, MacroEvent, MacroEventType } from "./calendar";

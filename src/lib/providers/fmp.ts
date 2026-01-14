@@ -34,6 +34,24 @@ const coerceString = (value: unknown): string | null => {
   return null;
 };
 
+export type CompanyProfile = {
+  symbol: string;
+  companyName: string | null;
+  country: string | null;
+  exchange: string | null;
+  exchangeShortName: string | null;
+  currency: string | null;
+  isAdr: boolean | null;
+  marketCap: number | null;
+};
+
+export type QuoteSnapshot = {
+  symbol: string;
+  price: number | null;
+  volume: number | null;
+  avgVolume: number | null;
+};
+
 export class FmpClient {
   private apiKey: string;
   private baseUrl: string;
@@ -57,6 +75,52 @@ export class FmpClient {
     }
 
     return (await response.json()) as T;
+  }
+
+  async getCompanyProfile(symbol: string): Promise<CompanyProfile> {
+    const safeSymbol = symbol.toUpperCase();
+    const cacheKey = `profile:${safeSymbol}`;
+    const ttlMs = 12 * 60 * 60 * 1000;
+
+    return withCache(cacheKey, ttlMs, async () => {
+      const payload = await this.request<Array<Record<string, unknown>>>({
+        path: `/api/v3/profile/${safeSymbol}`
+      }).catch(() => []);
+
+      const profile = payload[0] ?? {};
+
+      return {
+        symbol: safeSymbol,
+        companyName: coerceString(profile.companyName),
+        country: coerceString(profile.country),
+        exchange: coerceString(profile.exchange),
+        exchangeShortName: coerceString(profile.exchangeShortName),
+        currency: coerceString(profile.currency),
+        isAdr: typeof profile.isAdr === "boolean" ? profile.isAdr : null,
+        marketCap: coerceNumber(profile.mktCap ?? profile.marketCap)
+      };
+    });
+  }
+
+  async getQuoteSnapshot(symbol: string): Promise<QuoteSnapshot> {
+    const safeSymbol = symbol.toUpperCase();
+    const cacheKey = `quote:${safeSymbol}`;
+    const ttlMs = 6 * 60 * 60 * 1000;
+
+    return withCache(cacheKey, ttlMs, async () => {
+      const payload = await this.request<Array<Record<string, unknown>>>({
+        path: `/api/v3/quote/${safeSymbol}`
+      }).catch(() => []);
+
+      const quote = payload[0] ?? {};
+
+      return {
+        symbol: safeSymbol,
+        price: coerceNumber(quote.price),
+        volume: coerceNumber(quote.volume),
+        avgVolume: coerceNumber(quote.avgVolume ?? quote.avgVolume10 ?? quote.avgVolume30)
+      };
+    });
   }
 
   async getFundamentals(symbol: string): Promise<Fundamentals> {

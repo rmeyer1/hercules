@@ -7,3 +7,13 @@ export type { UniverseFilters, UserPreferences } from "./filters";
 export type { StockQuote, StockTrade } from "./market";
 export type { Fundamentals } from "./fundamentals";
 export type { CalendarSnapshot, EarningsInfo, MacroEvent, MacroEventType } from "./calendar";
+export type {
+  RecommendationProfile,
+  UniverseBuildConfig,
+  UniverseBuildRequest,
+  UniverseReason,
+  UniverseReasonCode,
+  UniverseResult,
+  UniverseSource,
+  UniverseTickerDecision
+} from "./universe";

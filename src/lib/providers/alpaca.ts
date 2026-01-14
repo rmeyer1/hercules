@@ -1,4 +1,5 @@
 import type { OptionChainSnapshot, OptionContract, StockQuote, StockTrade } from "@/src/lib/types";
+import { withCache } from "@/src/lib/cache/memory";
 
 const DEFAULT_DATA_BASE_URL = "https://data.alpaca.markets";
 const DEFAULT_MAX_RETRIES = 3;
@@ -155,66 +156,21 @@ export class AlpacaClient {
     feed: "indicative" | "opra" = "indicative",
     pageToken?: string
   ): Promise<OptionChainSnapshot> {
-    const payload = await this.request<{
-      snapshots?: Record<string, Record<string, unknown>>;
-      next_page_token?: string;
-    }>({
-      path: `/v1beta1/options/snapshots/${underlying}`,
-      query: { feed, page_token: pageToken }
-    });
+    const safeUnderlying = underlying.toUpperCase();
+    const cacheKey = `options:${safeUnderlying}:${feed}:${pageToken ?? "first"}`;
+    const ttlMs = 10 * 60 * 1000;
 
-    const snapshots = payload.snapshots ?? {};
-    const contracts: OptionContract[] = Object.entries(snapshots).map(([symbol, data]) => {
-      const typedData = data ?? {};
-      const latestQuote = (typedData.latestQuote ?? typedData.latest_quote ?? {}) as Record<
-        string,
-        unknown
-      >;
-      const latestTrade = (typedData.latestTrade ?? typedData.latest_trade ?? {}) as Record<
-        string,
-        unknown
-      >;
-      const greeks = (typedData.greeks ?? {}) as Record<string, unknown>;
-      const parsedSymbol = parseOptionSymbol(symbol);
+    return withCache(cacheKey, ttlMs, async () => {
+      const payload = await this.request<{
+        snapshots?: Record<string, Record<string, unknown>>;
+        next_page_token?: string;
+      }>({
+        path: `/v1beta1/options/snapshots/${safeUnderlying}`,
+        query: { feed, page_token: pageToken }
+      });
 
-      const meta = {
-        underlying:
-          typeof typedData.root_symbol === "string"
-            ? typedData.root_symbol
-            : parsedSymbol.underlying,
-        expiration:
-          (typedData.expiration_date as string | undefined) ?? parsedSymbol.expiration,
-        side:
-          (typedData.type as string | undefined) === "put"
-            ? "put"
-            : (typedData.type as string | undefined) === "call"
-              ? "call"
-              : parsedSymbol.side,
-        strike:
-          typeof typedData.strike_price === "number"
-            ? typedData.strike_price
-            : parsedSymbol.strike
-      };
-
-      return {
-        symbol,
-        underlying: meta.underlying,
-        side: meta.side,
-        expiration: meta.expiration,
-        strike: meta.strike,
-        bid: coerceNumber(latestQuote.bp),
-        ask: coerceNumber(latestQuote.ap),
-        last: coerceNullableNumber(latestTrade.p),
-        openInterest: coerceNumber(typedData.open_interest ?? typedData.openInterest),
-        volume: coerceNumber(typedData.volume),
-        impliedVol: coerceNumber(typedData.impliedVolatility ?? typedData.implied_volatility),
-        delta: coerceNullableNumber(greeks.delta),
-        theta: coerceNullableNumber(greeks.theta)
-      };
-    });
-
-    const latestTimestamp = Object.values(snapshots)
-      .map((data) => {
+      const snapshots = payload.snapshots ?? {};
+      const contracts: OptionContract[] = Object.entries(snapshots).map(([symbol, data]) => {
         const typedData = data ?? {};
         const latestQuote = (typedData.latestQuote ?? typedData.latest_quote ?? {}) as Record<
           string,
@@ -224,14 +180,65 @@ export class AlpacaClient {
           string,
           unknown
         >;
-        return (latestQuote.t as string | undefined) ?? (latestTrade.t as string | undefined);
-      })
-      .find(Boolean);
+        const greeks = (typedData.greeks ?? {}) as Record<string, unknown>;
+        const parsedSymbol = parseOptionSymbol(symbol);
 
-    return {
-      underlying,
-      asOf: parseDateString(latestTimestamp ?? null),
-      contracts
-    };
+        const meta = {
+          underlying:
+            typeof typedData.root_symbol === "string"
+              ? typedData.root_symbol
+              : parsedSymbol.underlying,
+          expiration:
+            (typedData.expiration_date as string | undefined) ?? parsedSymbol.expiration,
+          side:
+            (typedData.type as string | undefined) === "put"
+              ? "put"
+              : (typedData.type as string | undefined) === "call"
+                ? "call"
+                : parsedSymbol.side,
+          strike:
+            typeof typedData.strike_price === "number"
+              ? typedData.strike_price
+              : parsedSymbol.strike
+        };
+
+        return {
+          symbol,
+          underlying: meta.underlying,
+          side: meta.side,
+          expiration: meta.expiration,
+          strike: meta.strike,
+          bid: coerceNumber(latestQuote.bp),
+          ask: coerceNumber(latestQuote.ap),
+          last: coerceNullableNumber(latestTrade.p),
+          openInterest: coerceNumber(typedData.open_interest ?? typedData.openInterest),
+          volume: coerceNumber(typedData.volume),
+          impliedVol: coerceNumber(typedData.impliedVolatility ?? typedData.implied_volatility),
+          delta: coerceNullableNumber(greeks.delta),
+          theta: coerceNullableNumber(greeks.theta)
+        };
+      });
+
+      const latestTimestamp = Object.values(snapshots)
+        .map((data) => {
+          const typedData = data ?? {};
+          const latestQuote = (typedData.latestQuote ?? typedData.latest_quote ?? {}) as Record<
+            string,
+            unknown
+          >;
+          const latestTrade = (typedData.latestTrade ?? typedData.latest_trade ?? {}) as Record<
+            string,
+            unknown
+          >;
+          return (latestQuote.t as string | undefined) ?? (latestTrade.t as string | undefined);
+        })
+        .find(Boolean);
+
+      return {
+        underlying: safeUnderlying,
+        asOf: parseDateString(latestTimestamp ?? null),
+        contracts
+      };
+    });
   }
 }

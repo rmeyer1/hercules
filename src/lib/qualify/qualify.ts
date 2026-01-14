@@ -131,7 +131,30 @@ export const qualify = async (request: QualifyRequest): Promise<QualifyResponse>
     try {
       const fundamentals = await fmpClient.getFundamentals(item.ticker);
       const quote = await fmpClient.getQuoteSnapshot(item.ticker);
-      if (!quote.price) {
+      let resolvedPrice = quote.price ?? null;
+      let resolvedAvgVolume = quote.avgVolume ?? null;
+
+      if (!resolvedPrice || resolvedPrice <= 0) {
+        try {
+          const trade = await alpacaClient.getLatestTrade(item.ticker);
+          if (trade.price > 0) {
+            resolvedPrice = trade.price;
+          } else {
+            const latestQuote = await alpacaClient.getLatestQuote(item.ticker);
+            const midpoint =
+              latestQuote.bidPrice > 0 && latestQuote.askPrice > 0
+                ? (latestQuote.bidPrice + latestQuote.askPrice) / 2
+                : 0;
+            if (midpoint > 0) {
+              resolvedPrice = midpoint;
+            }
+          }
+        } catch {
+          // Ignore Alpaca fallback errors and use the existing quote data.
+        }
+      }
+
+      if (!resolvedPrice || resolvedPrice <= 0) {
         disqualified.push({ ticker: item.ticker, reasons: ["Missing price data."] });
         continue;
       }
@@ -139,8 +162,8 @@ export const qualify = async (request: QualifyRequest): Promise<QualifyResponse>
       const chain = await alpacaClient.getOptionChainSnapshot(item.ticker);
       const calendar = await calendarProvider.getCalendarSnapshot(item.ticker);
 
-      const marketTrend = neutralTrend(quote.price);
-      const stockTrend = neutralTrend(quote.price);
+      const marketTrend = neutralTrend(resolvedPrice);
+      const stockTrend = neutralTrend(resolvedPrice);
       const selection = selectStrategies({
         marketTrend,
         stockTrend,
@@ -153,7 +176,7 @@ export const qualify = async (request: QualifyRequest): Promise<QualifyResponse>
       for (const strategy of selection.strategies) {
         const expirationCandidates = buildExpirationCandidates(
           chain,
-          quote.price,
+          resolvedPrice,
           strategy,
           []
         );
@@ -163,11 +186,11 @@ export const qualify = async (request: QualifyRequest): Promise<QualifyResponse>
 
         for (const rankedExpiration of ranked) {
           const slice = filterContractsByExpiration(chain, rankedExpiration.expiration);
-          const strike = findStrikeCandidate(slice, quote.price, strategy);
+          const strike = findStrikeCandidate(slice, resolvedPrice, strategy);
           if (strike.reasons.length > 0) continue;
 
           const liquidity = evaluateLiquidityGate({
-            avgDailyVolume: quote.avgVolume ?? null,
+            avgDailyVolume: resolvedAvgVolume,
             shortStrike: strike.shortStrike,
             contracts: slice.contracts
           });

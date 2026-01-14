@@ -1,3 +1,7 @@
+import type { StrategyType } from "@/src/lib/types";
+
+const strategies: StrategyType[] = ["CSP", "PCS", "CCS", "CC"];
+
 export default function HomePage() {
   return (
     <section className="grid gap-8">
@@ -20,6 +24,22 @@ export default function HomePage() {
           <span className="rounded-full bg-black/5 px-4 py-2 text-black/70">
             Risk flags surfaced
           </span>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-black/10 bg-white/80 p-6">
+        <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-black/50">
+          Supported strategies
+        </h2>
+        <div className="mt-4 flex flex-wrap gap-3 text-sm">
+          {strategies.map((strategy) => (
+            <span
+              key={strategy}
+              className="rounded-full border border-black/10 bg-white px-4 py-2 text-black/70"
+            >
+              {strategy}
+            </span>
+          ))}
         </div>
       </div>
 

@@ -1,0 +1,7 @@
+export type RiskFlag =
+  | "EARNINGS_SOON"
+  | "MACRO_EVENT"
+  | "WIDE_SPREADS"
+  | "LOW_OI"
+  | "VOLATILITY_SPIKE"
+  | "CORRELATED_EXPOSURE";

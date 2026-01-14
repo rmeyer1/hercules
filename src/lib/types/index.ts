@@ -28,3 +28,4 @@ export type { StrategySelectionInput, StrategySelectionResult } from "./strategy
 export type { StrikeCandidate, StrikeFinderConfig, StrikeFinderReason } from "./strike";
 export type { ExpirationCandidate, ExpirationRanked, ExpirationRankingConfig } from "./expiry";
 export type { ExplanationInput, ExplanationResult } from "./explain";
+export type { PositionSizingInput, PositionSizingResult } from "./sizing";

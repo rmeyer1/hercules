@@ -19,9 +19,7 @@ const DEFAULT_MEME_TICKERS = [
   "SNDL",
   "CLOV",
   "SPCE",
-  "CVNA",
   "RIVN",
-  "HOOD",
   "NKLA"
 ];
 

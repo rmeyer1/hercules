@@ -1,17 +1,11 @@
-import type { CalendarSnapshot, EarningsInfo, MacroEvent } from "@/src/lib/types";
+import type { CalendarSnapshot, EarningsInfo, MacroEvent, MacroEventType } from "@/src/lib/types";
 
 const DEFAULT_BASE_URL = "https://financialmodelingprep.com";
 const MACRO_HORIZON_DAYS = 14;
 
-const STATIC_MACRO_EVENTS: MacroEvent[] = [
-  { type: "CPI", date: "2026-01-15", label: "CPI Release" },
-  { type: "FOMC", date: "2026-01-28", label: "FOMC Rate Decision" }
-];
-
 type CalendarClientOptions = {
   apiKey?: string;
   baseUrl?: string;
-  macroEvents?: MacroEvent[];
 };
 
 const buildQuery = (query: Record<string, string | number | boolean | undefined>) => {
@@ -41,12 +35,10 @@ const diffInDays = (from: Date, to: Date) => {
 export class CalendarProvider {
   private apiKey: string | null;
   private baseUrl: string;
-  private macroEvents: MacroEvent[];
 
   constructor(options: CalendarClientOptions = {}) {
     this.apiKey = options.apiKey ?? process.env.FMP_API_KEY ?? null;
     this.baseUrl = options.baseUrl ?? process.env.FMP_BASE_URL ?? DEFAULT_BASE_URL;
-    this.macroEvents = options.macroEvents ?? STATIC_MACRO_EVENTS;
   }
 
   private async request<T>(path: string, query: Record<string, string | number | boolean>) {
@@ -64,13 +56,68 @@ export class CalendarProvider {
     return (await response.json()) as T;
   }
 
-  private getUpcomingMacroEvents(now: Date, horizonDays = MACRO_HORIZON_DAYS) {
-    return this.macroEvents.filter((event) => {
-      const eventDate = parseDate(event.date);
-      if (!eventDate) return false;
-      const delta = diffInDays(now, eventDate);
-      return delta >= 0 && delta <= horizonDays;
-    });
+  private mapMacroEventType(label: string): MacroEventType | null {
+    const normalized = label.toLowerCase();
+    if (normalized.includes("cpi") || normalized.includes("consumer price")) {
+      return "CPI";
+    }
+    if (
+      normalized.includes("fomc") ||
+      normalized.includes("federal open market committee") ||
+      normalized.includes("federal funds") ||
+      normalized.includes("fed rate")
+    ) {
+      return "FOMC";
+    }
+    return null;
+  }
+
+  private async getUpcomingMacroEvents(
+    now: Date,
+    horizonDays = MACRO_HORIZON_DAYS
+  ): Promise<MacroEvent[]> {
+    if (!this.apiKey) {
+      return [];
+    }
+
+    const toDate = new Date(now.getTime() + horizonDays * 24 * 60 * 60 * 1000);
+    const payload = await this.request<Array<Record<string, unknown>>>(
+      `/api/v3/economic_calendar`,
+      { from: formatDate(now), to: formatDate(toDate) }
+    );
+
+    if (!payload || payload.length === 0) {
+      return [];
+    }
+
+    return payload
+      .map((row) => {
+        const label =
+          (row.event as string | undefined) ??
+          (row.name as string | undefined) ??
+          (row.title as string | undefined);
+        if (!label) return null;
+
+        const type = this.mapMacroEventType(label);
+        if (!type) return null;
+
+        const date =
+          (row.date as string | undefined) ??
+          (row.eventDate as string | undefined) ??
+          (row.dateTime as string | undefined);
+        const eventDate = parseDate(date);
+        if (!eventDate) return null;
+
+        const delta = diffInDays(now, eventDate);
+        if (delta < 0 || delta > horizonDays) return null;
+
+        return {
+          type,
+          date: formatDate(eventDate),
+          label
+        } satisfies MacroEvent;
+      })
+      .filter((event): event is MacroEvent => Boolean(event));
   }
 
   private async getEarningsInfo(symbol: string, now: Date): Promise<EarningsInfo> {
@@ -105,7 +152,7 @@ export class CalendarProvider {
   async getCalendarSnapshot(symbol: string): Promise<CalendarSnapshot> {
     const now = new Date();
     const earnings = await this.getEarningsInfo(symbol.toUpperCase(), now);
-    const macroEvents = this.getUpcomingMacroEvents(now);
+    const macroEvents = await this.getUpcomingMacroEvents(now);
 
     return {
       symbol: symbol.toUpperCase(),

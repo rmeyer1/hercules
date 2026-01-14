@@ -1,6 +1,7 @@
 import { AlpacaClient } from "@/src/lib/providers/alpaca";
 import { FmpClient } from "@/src/lib/providers/fmp";
 import type {
+  RecommendationProfile,
   UniverseBuildConfig,
   UniverseBuildRequest,
   UniverseReason,
@@ -24,29 +25,6 @@ const DEFAULT_MEME_TICKERS = [
   "NKLA"
 ];
 
-const DEFAULT_RECOMMENDED = [
-  "AAPL",
-  "MSFT",
-  "AMZN",
-  "GOOGL",
-  "META",
-  "NVDA",
-  "BRK.B",
-  "JPM",
-  "UNH",
-  "XOM",
-  "AVGO",
-  "TSLA",
-  "COST",
-  "PEP",
-  "AMD",
-  "V",
-  "MA",
-  "PG",
-  "HD",
-  "KO"
-];
-
 const DEFAULT_CONFIG: UniverseBuildConfig = {
   minAvgDailyVolume: 1_000_000,
   minOptionsOpenInterest: 500,
@@ -61,7 +39,11 @@ const normalizeTicker = (ticker: string) => ticker.trim().toUpperCase();
 
 const isValidTicker = (ticker: string) => /^[A-Z0-9.\-]{1,8}$/.test(ticker);
 
-const createReason = (code: UniverseReason["code"], message: string, severity: UniverseReason["severity"]): UniverseReason => ({
+const createReason = (
+  code: UniverseReason["code"],
+  message: string,
+  severity: UniverseReason["severity"]
+): UniverseReason => ({
   code,
   message,
   severity
@@ -80,6 +62,22 @@ const detectAdr = (isAdr: boolean | null, currency: string | null, exchange: str
   return false;
 };
 
+const resolveRecommendationProfile = (profile?: RecommendationProfile): RecommendationProfile => {
+  return profile ?? "SP500";
+};
+
+const getRecommendedTickers = async (
+  profile: RecommendationProfile,
+  fmpClient: FmpClient
+): Promise<string[]> => {
+  if (profile === "NASDAQ") {
+    const nasdaq = await fmpClient.getNasdaqConstituents();
+    return nasdaq.map((item) => item.symbol);
+  }
+  const sp500 = await fmpClient.getSp500Constituents();
+  return sp500.map((item) => item.symbol);
+};
+
 export const buildUniverse = async (request: UniverseBuildRequest): Promise<UniverseResult> => {
   const config: UniverseBuildConfig = {
     ...DEFAULT_CONFIG,
@@ -87,18 +85,26 @@ export const buildUniverse = async (request: UniverseBuildRequest): Promise<Univ
     memeTickers: request.config?.memeTickers ?? DEFAULT_CONFIG.memeTickers
   };
 
-  const sourceTickers =
-    request.source === "RECOMMENDED"
-      ? [...DEFAULT_RECOMMENDED, ...(request.tickers ?? [])]
-      : request.tickers ?? [];
-  const normalizedTickers = Array.from(new Set(sourceTickers.map(normalizeTicker))).sort();
-
   let fmpClient: FmpClient | null = null;
   try {
     fmpClient = new FmpClient();
   } catch {
     fmpClient = null;
   }
+
+  let sourceTickers: string[] = [];
+  if (request.source === "RECOMMENDED") {
+    if (!fmpClient) {
+      throw new Error("FMP API key is required for recommended universe.");
+    }
+    const profile = resolveRecommendationProfile(request.recommendationProfile);
+    const recommended = await getRecommendedTickers(profile, fmpClient);
+    sourceTickers = [...recommended, ...(request.tickers ?? [])];
+  } else {
+    sourceTickers = request.tickers ?? [];
+  }
+
+  const normalizedTickers = Array.from(new Set(sourceTickers.map(normalizeTicker))).sort();
   let alpacaClient: AlpacaClient | null = null;
 
   if (config.useOptionsSnapshot) {

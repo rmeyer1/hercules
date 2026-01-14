@@ -52,6 +52,11 @@ export type QuoteSnapshot = {
   avgVolume: number | null;
 };
 
+type IndexConstituent = {
+  symbol: string;
+  name: string | null;
+};
+
 export class FmpClient {
   private apiKey: string;
   private baseUrl: string;
@@ -171,6 +176,50 @@ export class FmpClient {
           metricsRow.freeCashFlowTTM ?? metricsRow.freeCashFlowPerShareTTM
         )
       };
+    });
+  }
+
+  async getSp500Constituents(): Promise<IndexConstituent[]> {
+    const cacheKey = "index:sp500";
+    const ttlMs = 12 * 60 * 60 * 1000;
+
+    return withCache(cacheKey, ttlMs, async () => {
+      const payload = await this.request<Array<Record<string, unknown>>>({
+        path: "/api/v3/sp500_constituent"
+      }).catch(() => []);
+
+      return payload
+        .map((row) => {
+          const symbol = coerceString(row.symbol);
+          if (!symbol) return null;
+          return {
+            symbol,
+            name: coerceString(row.name)
+          };
+        })
+        .filter((row): row is IndexConstituent => Boolean(row));
+    });
+  }
+
+  async getNasdaqConstituents(): Promise<IndexConstituent[]> {
+    const cacheKey = "index:nasdaq";
+    const ttlMs = 12 * 60 * 60 * 1000;
+
+    return withCache(cacheKey, ttlMs, async () => {
+      const payload = await this.request<Array<Record<string, unknown>>>({
+        path: "/api/v3/nasdaq_constituent"
+      }).catch(() => []);
+
+      return payload
+        .map((row) => {
+          const symbol = coerceString(row.symbol);
+          if (!symbol) return null;
+          return {
+            symbol,
+            name: coerceString(row.name)
+          };
+        })
+        .filter((row): row is IndexConstituent => Boolean(row));
     });
   }
 }

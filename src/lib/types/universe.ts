@@ -1,6 +1,6 @@
 export type UniverseSource = "MANUAL" | "RECOMMENDED";
 
-export type RecommendationProfile = "DEFAULT";
+export type RecommendationProfile = "SP500" | "NASDAQ";
 
 export type UniverseReasonCode =
   | "INVALID_TICKER"

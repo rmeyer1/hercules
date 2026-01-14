@@ -29,3 +29,4 @@ export type { StrikeCandidate, StrikeFinderConfig, StrikeFinderReason } from "./
 export type { ExpirationCandidate, ExpirationRanked, ExpirationRankingConfig } from "./expiry";
 export type { ExplanationInput, ExplanationResult } from "./explain";
 export type { PositionSizingInput, PositionSizingResult } from "./sizing";
+export type { PositionExposure, ConcentrationConfig, ConcentrationResult } from "./concentration";

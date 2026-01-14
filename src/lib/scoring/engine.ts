@@ -1,9 +1,11 @@
 import type { Fundamentals, LiquidityGateResult, RiskFlag, ScoreBreakdown } from "@/src/lib/types";
+import { scoreVolatilityQuality } from "@/src/lib/scoring/volatility";
 
 export type ScoreInput = {
   fundamentals: Fundamentals | null;
   liquidityGate: LiquidityGateResult | null;
   impliedVol: number | null;
+  ivChangeRate: number | null;
   trendScore: number | null;
   eventRiskFlags: RiskFlag[];
 };
@@ -52,14 +54,6 @@ const scoreLiquidity = (liquidityGate: LiquidityGateResult | null, weight: numbe
   return liquidityGate.passed ? weight : weight * 0.2;
 };
 
-const scoreVolatility = (impliedVol: number | null, weight: number) => {
-  if (impliedVol === null) return weight * 0.4;
-  if (impliedVol >= 0.5) return weight * 0.9;
-  if (impliedVol >= 0.3) return weight * 0.7;
-  if (impliedVol >= 0.2) return weight * 0.5;
-  return weight * 0.3;
-};
-
 const scoreTechnical = (trendScore: number | null, weight: number) => {
   if (trendScore === null) return weight * 0.5;
   const normalized = clamp(trendScore, 0, 1);
@@ -83,9 +77,17 @@ export const scoreCandidate = (
 ): ScoreResult => {
   const fundamentalsScore = scoreFundamentals(input.fundamentals, config.fundamentalsWeight);
   const liquidityScore = scoreLiquidity(input.liquidityGate, config.liquidityWeight);
-  const volatilityScore = scoreVolatility(input.impliedVol, config.volatilityWeight);
+  const volatilityQuality = scoreVolatilityQuality(input.impliedVol, input.ivChangeRate);
+  const volatilityScore = clamp(
+    config.volatilityWeight * volatilityQuality.scoreMultiplier,
+    0,
+    config.volatilityWeight
+  );
   const technicalScore = scoreTechnical(input.trendScore, config.technicalWeight);
   const eventScore = scoreEventRisk(input.eventRiskFlags, config.eventWeight);
+  const riskFlags = Array.from(
+    new Set([...input.eventRiskFlags, ...volatilityQuality.riskFlags])
+  );
 
   const total = clamp(
     fundamentalsScore + liquidityScore + volatilityScore + technicalScore + eventScore,
@@ -105,7 +107,7 @@ export const scoreCandidate = (
   return {
     total: breakdown.total,
     breakdown,
-    riskFlags: input.eventRiskFlags,
+    riskFlags,
     interpretation: interpretScore(breakdown.total)
   };
 };

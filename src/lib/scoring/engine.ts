@@ -1,4 +1,5 @@
 import type {
+  CalendarSnapshot,
   Fundamentals,
   LiquidityGateResult,
   RiskFlag,
@@ -6,6 +7,7 @@ import type {
   TrendMetrics,
   VolatilityMetrics
 } from "@/src/lib/types";
+import { scoreEventRisk } from "@/src/lib/scoring/event";
 import { scoreVolatilityQuality } from "@/src/lib/scoring/volatility";
 import { deriveRegime, scoreTrendSafety } from "@/src/lib/scoring/trend";
 
@@ -18,6 +20,8 @@ export type ScoreInput = {
   stockTrend: TrendMetrics | null;
   marketTrend: TrendMetrics | null;
   eventRiskFlags: RiskFlag[];
+  calendar: CalendarSnapshot | null;
+  tradeDte: number | null;
 };
 
 export type ScoreConfig = {
@@ -81,11 +85,6 @@ const scoreTechnical = (
   return normalized * weight;
 };
 
-const scoreEventRisk = (riskFlags: RiskFlag[], weight: number) => {
-  if (riskFlags.length === 0) return weight;
-  return clamp(weight - riskFlags.length * 2, 0, weight);
-};
-
 const interpretScore = (total: number): ScoreResult["interpretation"] => {
   if (total >= 80) return "HIGH";
   if (total >= 65) return "ACCEPTABLE";
@@ -110,13 +109,14 @@ export const scoreCandidate = (
     input.marketTrend,
     config.technicalWeight
   );
-  const eventScore = scoreEventRisk(input.eventRiskFlags, config.eventWeight);
+  const eventOutput = scoreEventRisk(input.eventRiskFlags, input.calendar, input.tradeDte);
+  const eventScore = clamp(config.eventWeight * eventOutput.scoreMultiplier, 0, config.eventWeight);
   const trendFlags =
     input.stockTrend && input.marketTrend
       ? scoreTrendSafety(input.stockTrend, deriveRegime(input.marketTrend)).riskFlags
       : [];
   const riskFlags = Array.from(
-    new Set([...input.eventRiskFlags, ...volatilityQuality.riskFlags, ...trendFlags])
+    new Set([...eventOutput.riskFlags, ...volatilityQuality.riskFlags, ...trendFlags])
   );
 
   const total = clamp(

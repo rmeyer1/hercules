@@ -45,4 +45,27 @@ describe("strike finder", () => {
     const result = findStrikeCandidate(makeChain(contracts), 160, "PCS");
     expect(result.reasons[0]?.code).toBe("NO_VALID_SHORT_STRIKE");
   });
+
+  it("disqualifies trades below minimum credit", () => {
+    const contracts = [makeContract({ symbol: "A", strike: 145, delta: -0.2, bid: 0.2 })];
+
+    const result = findStrikeCandidate(makeChain(contracts), 160, "CSP", { minCredit: 0.3 });
+    expect(result.reasons.some((reason) => reason.code === "INSUFFICIENT_CREDIT")).toBe(true);
+  });
+
+  it("disqualifies spreads with poor credit-to-width", () => {
+    const contracts = [
+      makeContract({ symbol: "A", strike: 140, delta: -0.2, bid: 0.3, ask: 0.35 }),
+      makeContract({ symbol: "B", strike: 135, delta: -0.15, bid: 0.05, ask: 0.25 })
+    ];
+
+    const result = findStrikeCandidate(makeChain(contracts), 160, "PCS", {
+      minCredit: 0.01,
+      minCreditPct: 0.15
+    });
+
+    expect(result.reasons.some((reason) => reason.code === "POOR_CREDIT_TO_WIDTH")).toBe(
+      true
+    );
+  });
 });

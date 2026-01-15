@@ -1,12 +1,20 @@
 import type { OptionChainSnapshot, OptionContract, OptionSide, StrategyType } from "@/src/lib/types";
 import type { StrikeCandidate, StrikeFinderConfig, StrikeFinderReason } from "@/src/lib/types/strike";
 
+const parseEnvNumber = (value: string | undefined, fallback: number) => {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 const DEFAULT_CONFIG: StrikeFinderConfig = {
   allowAtm: process.env.STRIKE_ALLOW_ATM === "true",
   minShortBid: 0.05,
   maxSpreadPct: 0.2,
   minOpenInterest: 200,
   minVolume: 20,
+  minCredit: parseEnvNumber(process.env.STRIKE_MIN_CREDIT, 0.1),
+  minCreditPct: parseEnvNumber(process.env.STRIKE_MIN_CREDIT_PCT, 0.15),
   cspMinOtmPct: 0.05,
   cspMaxOtmPct: 0.3,
   cspTargetDelta: 0.23,
@@ -260,6 +268,30 @@ const buildCandidate = (
   };
 };
 
+const applyCreditGuardrails = (
+  candidate: StrikeCandidate,
+  short: OptionContract,
+  long: OptionContract | null,
+  cfg: StrikeFinderConfig
+) => {
+  if (candidate.credit < cfg.minCredit) {
+    candidate.reasons.push({
+      code: "INSUFFICIENT_CREDIT",
+      message: `Credit ${candidate.credit.toFixed(2)} is below minimum ${cfg.minCredit.toFixed(2)}.`
+    });
+  }
+
+  if (long) {
+    const width = Math.abs(short.strike - long.strike);
+    if (width > 0 && candidate.credit / width < cfg.minCreditPct) {
+      candidate.reasons.push({
+        code: "POOR_CREDIT_TO_WIDTH",
+        message: `Credit/width ${(candidate.credit / width).toFixed(2)} is below minimum ${cfg.minCreditPct.toFixed(2)}.`
+      });
+    }
+  }
+};
+
 export const findStrikeCandidate = (
   chain: OptionChainSnapshot,
   underlyingPrice: number,
@@ -317,7 +349,9 @@ export const findStrikeCandidate = (
   }
 
   if (strategy === "CSP" || strategy === "CC") {
-    return buildCandidate(strategy, shortResult.strike, null, reasons);
+    const candidate = buildCandidate(strategy, shortResult.strike, null, reasons);
+    applyCreditGuardrails(candidate, shortResult.strike, null, cfg);
+    return candidate;
   }
 
   const long = selectLongStrike(
@@ -346,5 +380,7 @@ export const findStrikeCandidate = (
     };
   }
 
-  return buildCandidate(strategy, shortResult.strike, long, reasons);
+  const candidate = buildCandidate(strategy, shortResult.strike, long, reasons);
+  applyCreditGuardrails(candidate, shortResult.strike, long, cfg);
+  return candidate;
 };

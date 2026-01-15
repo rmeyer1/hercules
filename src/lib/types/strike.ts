@@ -3,7 +3,9 @@ import type { StrategyType } from "@/src/lib/types";
 export type StrikeFinderReasonCode =
   | "NO_TRADE"
   | "NO_VALID_SHORT_STRIKE"
-  | "NO_VALID_LONG_STRIKE";
+  | "NO_VALID_LONG_STRIKE"
+  | "INSUFFICIENT_CREDIT"
+  | "POOR_CREDIT_TO_WIDTH";
 
 export type StrikeFinderReason = {
   code: StrikeFinderReasonCode;
@@ -16,6 +18,8 @@ export type StrikeFinderConfig = {
   maxSpreadPct: number;
   minOpenInterest: number;
   minVolume: number;
+  minCredit: number;
+  minCreditPct: number;
   cspMinOtmPct: number;
   cspMaxOtmPct: number;
   cspTargetDelta: number;

@@ -36,7 +36,9 @@ const buildExpirationCandidates = (
   chain: OptionChainSnapshot,
   underlyingPrice: number,
   strategy: StrategyType,
-  riskFlags: string[]
+  riskFlags: string[],
+  strikeFailureCounts?: Record<string, number>,
+  strikeFailureExamples?: Record<string, string>
 ): ExpirationCandidate[] => {
   const expirations = Array.from(new Set(chain.contracts.map((contract) => contract.expiration)));
   return expirations
@@ -45,7 +47,17 @@ const buildExpirationCandidates = (
       if (dte === null) return null;
       const slice = filterContractsByExpiration(chain, expiration);
       const strike = findStrikeCandidate(slice, underlyingPrice, strategy);
-      if (strike.reasons.length > 0) return null;
+      if (strike.reasons.length > 0) {
+        if (strikeFailureCounts && strikeFailureExamples) {
+          strike.reasons.forEach((reason) => {
+            strikeFailureCounts[reason.code] = (strikeFailureCounts[reason.code] ?? 0) + 1;
+            if (!strikeFailureExamples[reason.code]) {
+              strikeFailureExamples[reason.code] = reason.message;
+            }
+          });
+        }
+        return null;
+      }
       return {
         expiration,
         dte,
@@ -129,6 +141,9 @@ export const qualify = async (request: QualifyRequest): Promise<QualifyResponse>
 
   for (const item of universe.included) {
     try {
+      const strikeFailureCounts: Record<string, number> = {};
+      const strikeFailureExamples: Record<string, string> = {};
+
       const fundamentals = await fmpClient.getFundamentals(item.ticker);
       const quote = await fmpClient.getQuoteSnapshot(item.ticker);
       let resolvedPrice = quote.price ?? null;
@@ -178,7 +193,9 @@ export const qualify = async (request: QualifyRequest): Promise<QualifyResponse>
           chain,
           resolvedPrice,
           strategy,
-          []
+          [],
+          strikeFailureCounts,
+          strikeFailureExamples
         );
         if (expirationCandidates.length === 0) continue;
 
@@ -222,9 +239,22 @@ export const qualify = async (request: QualifyRequest): Promise<QualifyResponse>
       }
 
       if (tradeCandidates.length === 0) {
+        const failureSummaries = Object.entries(strikeFailureCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 2)
+          .map(([code, count]) => {
+            const example = strikeFailureExamples[code];
+            return `${code} (${count})${example ? ` — ${example}` : ""}`;
+          })
+          .join(" ");
+
         disqualified.push({
           ticker: item.ticker,
-          reasons: ["No valid strikes found within DTE window."]
+          reasons: [
+            failureSummaries
+              ? `No valid strikes found. ${failureSummaries}`
+              : "No valid strikes found within DTE window."
+          ]
         });
         continue;
       }

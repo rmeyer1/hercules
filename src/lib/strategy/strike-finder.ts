@@ -2,14 +2,25 @@ import type { OptionChainSnapshot, OptionContract, OptionSide, StrategyType } fr
 import type { StrikeCandidate, StrikeFinderConfig, StrikeFinderReason } from "@/src/lib/types/strike";
 
 const DEFAULT_CONFIG: StrikeFinderConfig = {
-  minOtmPct: 0.15,
-  maxOtmPct: 0.2,
+  minOtmPct: 0.1,
+  maxOtmPct: 0.25,
   allowAtm: process.env.STRIKE_ALLOW_ATM === "true",
-  cspDeltaMin: 0.15,
-  cspDeltaMax: 0.25,
-  spreadDeltaMin: 0.1,
-  spreadDeltaMax: 0.2,
-  spreadWidth: 5
+  cspDeltaMin: 0.1,
+  cspDeltaMax: 0.3,
+  spreadDeltaMin: 0.08,
+  spreadDeltaMax: 0.25,
+  spreadWidthMin: 3,
+  spreadWidthMax: 10
+};
+
+type ShortStrikeSelection = {
+  strike: OptionContract | null;
+  diagnostic: {
+    total: number;
+    otmMatches: number;
+    deltaMatches: number;
+    bothMatches: number;
+  };
 };
 
 const calcOtmPct = (underlying: number, strike: number, side: OptionSide) => {
@@ -35,36 +46,74 @@ const selectShortStrike = (
   deltaMin: number,
   deltaMax: number,
   config: StrikeFinderConfig
-) => {
-  const filtered = contracts.filter((contract) => {
+): ShortStrikeSelection => {
+  const sideContracts = contracts.filter((contract) => contract.side === side);
+  const otmMatches = sideContracts.filter((contract) => {
+    const otmPct = calcOtmPct(underlying, contract.strike, side);
+    return isValidOtm(otmPct, config);
+  });
+  const deltaMatches = sideContracts.filter((contract) =>
+    inDeltaBand(contract.delta, deltaMin, deltaMax)
+  );
+  const filtered = sideContracts.filter((contract) => {
     if (contract.side !== side) return false;
     const otmPct = calcOtmPct(underlying, contract.strike, side);
     if (!isValidOtm(otmPct, config)) return false;
     return inDeltaBand(contract.delta, deltaMin, deltaMax);
   });
 
-  if (filtered.length === 0) return null;
+  if (filtered.length === 0) {
+    return {
+      strike: null,
+      diagnostic: {
+        total: sideContracts.length,
+        otmMatches: otmMatches.length,
+        deltaMatches: deltaMatches.length,
+        bothMatches: 0
+      }
+    };
+  }
 
-  return filtered.sort((a, b) => {
+  const strike = filtered.sort((a, b) => {
     const deltaA = Math.abs(a.delta ?? 0.5);
     const deltaB = Math.abs(b.delta ?? 0.5);
     return deltaA - deltaB;
   })[0];
+
+  return {
+    strike,
+    diagnostic: {
+      total: sideContracts.length,
+      otmMatches: otmMatches.length,
+      deltaMatches: deltaMatches.length,
+      bothMatches: filtered.length
+    }
+  };
 };
 
 const selectLongStrike = (
   contracts: OptionContract[],
   shortStrike: number,
   side: OptionSide,
-  width: number
+  widthMin: number,
+  widthMax: number
 ) => {
-  const targetStrike = side === "put" ? shortStrike - width : shortStrike + width;
   const candidates = contracts.filter((contract) => contract.side === side);
   if (candidates.length === 0) return null;
 
-  return candidates.reduce((best, contract) => {
-    const bestDistance = Math.abs(best.strike - targetStrike);
-    const nextDistance = Math.abs(contract.strike - targetStrike);
+  const withinRange = candidates.filter((contract) => {
+    const distance = Math.abs(contract.strike - shortStrike);
+    return distance >= widthMin && distance <= widthMax;
+  });
+
+  if (withinRange.length === 0) {
+    return null;
+  }
+
+  const targetDistance = (widthMin + widthMax) / 2;
+  return withinRange.reduce((best, contract) => {
+    const bestDistance = Math.abs(Math.abs(best.strike - shortStrike) - targetDistance);
+    const nextDistance = Math.abs(Math.abs(contract.strike - shortStrike) - targetDistance);
     return nextDistance < bestDistance ? contract : best;
   });
 };
@@ -139,8 +188,21 @@ export const findStrikeCandidate = (
   const deltaMin = strategy === "CSP" ? cfg.cspDeltaMin : cfg.spreadDeltaMin;
   const deltaMax = strategy === "CSP" ? cfg.cspDeltaMax : cfg.spreadDeltaMax;
 
-  const short = selectShortStrike(chain.contracts, underlyingPrice, side, deltaMin, deltaMax, cfg);
-  if (!short) {
+  const shortResult = selectShortStrike(
+    chain.contracts,
+    underlyingPrice,
+    side,
+    deltaMin,
+    deltaMax,
+    cfg
+  );
+  if (!shortResult.strike) {
+    const diagnostic = shortResult.diagnostic;
+    const summary = diagnostic
+      ? `Side contracts: ${diagnostic.total}, OTM(${Math.round(
+          cfg.minOtmPct * 100
+        )}-${Math.round(cfg.maxOtmPct * 100)}%): ${diagnostic.otmMatches}, Delta(${deltaMin}-${deltaMax}): ${diagnostic.deltaMatches}.`
+      : "No qualifying contracts in chain.";
     return {
       strategy,
       shortStrike: 0,
@@ -150,28 +212,44 @@ export const findStrikeCandidate = (
       thetaPerDay: 0,
       pop: 0,
       shortDelta: null,
-      reasons: [{ code: "NO_VALID_SHORT_STRIKE", message: "No short strike meets OTM/delta rules." }]
+      reasons: [
+        {
+          code: "NO_VALID_SHORT_STRIKE",
+          message: `No short strike meets OTM/delta rules. ${summary}`
+        }
+      ]
     };
   }
 
   if (strategy === "CSP" || strategy === "CC") {
-    return buildCandidate(strategy, short, null, reasons);
+    return buildCandidate(strategy, shortResult.strike, null, reasons);
   }
 
-  const long = selectLongStrike(chain.contracts, short.strike, side, cfg.spreadWidth);
+  const long = selectLongStrike(
+    chain.contracts,
+    shortResult.strike.strike,
+    side,
+    cfg.spreadWidthMin,
+    cfg.spreadWidthMax
+  );
   if (!long) {
     return {
       strategy,
-      shortStrike: short.strike,
+      shortStrike: shortResult.strike.strike,
       credit: 0,
       maxLoss: 0,
       breakeven: 0,
       thetaPerDay: 0,
       pop: 0,
-      shortDelta: short.delta ?? null,
-      reasons: [{ code: "NO_VALID_LONG_STRIKE", message: "No long strike available for spread." }]
+      shortDelta: shortResult.strike.delta ?? null,
+      reasons: [
+        {
+          code: "NO_VALID_LONG_STRIKE",
+          message: `No long strike found between ${cfg.spreadWidthMin} and ${cfg.spreadWidthMax} points from short strike.`
+        }
+      ]
     };
   }
 
-  return buildCandidate(strategy, short, long, reasons);
+  return buildCandidate(strategy, shortResult.strike, long, reasons);
 };

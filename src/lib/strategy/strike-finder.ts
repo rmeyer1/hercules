@@ -2,13 +2,31 @@ import type { OptionChainSnapshot, OptionContract, OptionSide, StrategyType } fr
 import type { StrikeCandidate, StrikeFinderConfig, StrikeFinderReason } from "@/src/lib/types/strike";
 
 const DEFAULT_CONFIG: StrikeFinderConfig = {
-  minOtmPct: 0.1,
-  maxOtmPct: 0.25,
   allowAtm: process.env.STRIKE_ALLOW_ATM === "true",
-  cspDeltaMin: 0.1,
-  cspDeltaMax: 0.3,
-  spreadDeltaMin: 0.08,
-  spreadDeltaMax: 0.25,
+  minShortBid: 0.05,
+  maxSpreadPct: 0.2,
+  minOpenInterest: 200,
+  minVolume: 20,
+  cspMinOtmPct: 0.05,
+  cspMaxOtmPct: 0.3,
+  cspTargetDelta: 0.23,
+  cspDeltaMin: 0.18,
+  cspDeltaMax: 0.28,
+  pcsMinOtmPct: 0.03,
+  pcsMaxOtmPct: 0.25,
+  pcsTargetDelta: 0.2,
+  pcsDeltaMin: 0.18,
+  pcsDeltaMax: 0.22,
+  ccsMinOtmPct: 0.03,
+  ccsMaxOtmPct: 0.25,
+  ccsTargetDelta: 0.18,
+  ccsDeltaMin: 0.15,
+  ccsDeltaMax: 0.2,
+  ccMinOtmPct: 0.03,
+  ccMaxOtmPct: 0.2,
+  ccTargetDelta: 0.2,
+  ccDeltaMin: 0.15,
+  ccDeltaMax: 0.25,
   spreadWidthMin: 3,
   spreadWidthMax: 10
 };
@@ -19,8 +37,18 @@ type ShortStrikeSelection = {
     total: number;
     otmMatches: number;
     deltaMatches: number;
+    liquidityMatches: number;
     bothMatches: number;
   };
+};
+
+type StrategyStrikeConfig = {
+  minOtmPct: number;
+  maxOtmPct: number;
+  targetDelta: number;
+  deltaMin: number;
+  deltaMax: number;
+  side: OptionSide;
 };
 
 const calcOtmPct = (underlying: number, strike: number, side: OptionSide) => {
@@ -28,9 +56,9 @@ const calcOtmPct = (underlying: number, strike: number, side: OptionSide) => {
   return (strike - underlying) / underlying;
 };
 
-const isValidOtm = (otmPct: number, config: StrikeFinderConfig) => {
+const isValidOtm = (otmPct: number, config: StrikeFinderConfig, minOtm: number, maxOtm: number) => {
   if (!config.allowAtm && otmPct <= 0) return false;
-  return otmPct >= config.minOtmPct && otmPct <= config.maxOtmPct;
+  return otmPct >= minOtm && otmPct <= maxOtm;
 };
 
 const inDeltaBand = (delta: number | null, min: number, max: number) => {
@@ -39,27 +67,93 @@ const inDeltaBand = (delta: number | null, min: number, max: number) => {
   return absDelta >= min && absDelta <= max;
 };
 
+const calcMid = (bid: number, ask: number) => (bid + ask) / 2;
+
+const calcSpreadPct = (bid: number, ask: number) => {
+  const mid = calcMid(bid, ask);
+  if (mid <= 0) return Infinity;
+  return (ask - bid) / mid;
+};
+
+const isLiquidShort = (contract: OptionContract, config: StrikeFinderConfig) => {
+  if (contract.bid < config.minShortBid) return false;
+  if (contract.ask <= 0) return false;
+  const spreadPct = calcSpreadPct(contract.bid, contract.ask);
+  if (!Number.isFinite(spreadPct) || spreadPct > config.maxSpreadPct) return false;
+  if (contract.openInterest < config.minOpenInterest) return false;
+  if (contract.volume < config.minVolume) return false;
+  return true;
+};
+
+const getStrategyConfig = (
+  strategy: StrategyType,
+  config: StrikeFinderConfig
+): StrategyStrikeConfig => {
+  switch (strategy) {
+    case "CSP":
+      return {
+        minOtmPct: config.cspMinOtmPct,
+        maxOtmPct: config.cspMaxOtmPct,
+        targetDelta: config.cspTargetDelta,
+        deltaMin: config.cspDeltaMin,
+        deltaMax: config.cspDeltaMax,
+        side: "put"
+      };
+    case "PCS":
+      return {
+        minOtmPct: config.pcsMinOtmPct,
+        maxOtmPct: config.pcsMaxOtmPct,
+        targetDelta: config.pcsTargetDelta,
+        deltaMin: config.pcsDeltaMin,
+        deltaMax: config.pcsDeltaMax,
+        side: "put"
+      };
+    case "CCS":
+      return {
+        minOtmPct: config.ccsMinOtmPct,
+        maxOtmPct: config.ccsMaxOtmPct,
+        targetDelta: config.ccsTargetDelta,
+        deltaMin: config.ccsDeltaMin,
+        deltaMax: config.ccsDeltaMax,
+        side: "call"
+      };
+    case "CC":
+    default:
+      return {
+        minOtmPct: config.ccMinOtmPct,
+        maxOtmPct: config.ccMaxOtmPct,
+        targetDelta: config.ccTargetDelta,
+        deltaMin: config.ccDeltaMin,
+        deltaMax: config.ccDeltaMax,
+        side: "call"
+      };
+  }
+};
+
 const selectShortStrike = (
   contracts: OptionContract[],
   underlying: number,
-  side: OptionSide,
-  deltaMin: number,
-  deltaMax: number,
+  strategyConfig: StrategyStrikeConfig,
   config: StrikeFinderConfig
 ): ShortStrikeSelection => {
-  const sideContracts = contracts.filter((contract) => contract.side === side);
+  const sideContracts = contracts.filter((contract) => contract.side === strategyConfig.side);
   const otmMatches = sideContracts.filter((contract) => {
-    const otmPct = calcOtmPct(underlying, contract.strike, side);
-    return isValidOtm(otmPct, config);
+    const otmPct = calcOtmPct(underlying, contract.strike, strategyConfig.side);
+    return isValidOtm(otmPct, config, strategyConfig.minOtmPct, strategyConfig.maxOtmPct);
   });
   const deltaMatches = sideContracts.filter((contract) =>
-    inDeltaBand(contract.delta, deltaMin, deltaMax)
+    inDeltaBand(contract.delta, strategyConfig.deltaMin, strategyConfig.deltaMax)
   );
+  const liquidityMatches = sideContracts.filter((contract) => isLiquidShort(contract, config));
   const filtered = sideContracts.filter((contract) => {
-    if (contract.side !== side) return false;
-    const otmPct = calcOtmPct(underlying, contract.strike, side);
-    if (!isValidOtm(otmPct, config)) return false;
-    return inDeltaBand(contract.delta, deltaMin, deltaMax);
+    const otmPct = calcOtmPct(underlying, contract.strike, strategyConfig.side);
+    if (!isValidOtm(otmPct, config, strategyConfig.minOtmPct, strategyConfig.maxOtmPct)) {
+      return false;
+    }
+    if (!inDeltaBand(contract.delta, strategyConfig.deltaMin, strategyConfig.deltaMax)) {
+      return false;
+    }
+    return isLiquidShort(contract, config);
   });
 
   if (filtered.length === 0) {
@@ -69,15 +163,20 @@ const selectShortStrike = (
         total: sideContracts.length,
         otmMatches: otmMatches.length,
         deltaMatches: deltaMatches.length,
+        liquidityMatches: liquidityMatches.length,
         bothMatches: 0
       }
     };
   }
 
   const strike = filtered.sort((a, b) => {
-    const deltaA = Math.abs(a.delta ?? 0.5);
-    const deltaB = Math.abs(b.delta ?? 0.5);
-    return deltaA - deltaB;
+    const deltaA = Math.abs(a.delta ?? 0);
+    const deltaB = Math.abs(b.delta ?? 0);
+    const distanceA = Math.abs(deltaA - strategyConfig.targetDelta);
+    const distanceB = Math.abs(deltaB - strategyConfig.targetDelta);
+    if (distanceA !== distanceB) return distanceA - distanceB;
+    if (a.bid !== b.bid) return b.bid - a.bid;
+    return calcSpreadPct(a.bid, a.ask) - calcSpreadPct(b.bid, b.ask);
   })[0];
 
   return {
@@ -86,6 +185,7 @@ const selectShortStrike = (
       total: sideContracts.length,
       otmMatches: otmMatches.length,
       deltaMatches: deltaMatches.length,
+      liquidityMatches: liquidityMatches.length,
       bothMatches: filtered.length
     }
   };
@@ -183,25 +283,20 @@ export const findStrikeCandidate = (
     };
   }
 
-  const isPutStrategy = strategy === "CSP" || strategy === "PCS";
-  const side: OptionSide = isPutStrategy ? "put" : "call";
-  const deltaMin = strategy === "CSP" ? cfg.cspDeltaMin : cfg.spreadDeltaMin;
-  const deltaMax = strategy === "CSP" ? cfg.cspDeltaMax : cfg.spreadDeltaMax;
+  const strategyConfig = getStrategyConfig(strategy, cfg);
 
   const shortResult = selectShortStrike(
     chain.contracts,
     underlyingPrice,
-    side,
-    deltaMin,
-    deltaMax,
+    strategyConfig,
     cfg
   );
   if (!shortResult.strike) {
     const diagnostic = shortResult.diagnostic;
     const summary = diagnostic
       ? `Side contracts: ${diagnostic.total}, OTM(${Math.round(
-          cfg.minOtmPct * 100
-        )}-${Math.round(cfg.maxOtmPct * 100)}%): ${diagnostic.otmMatches}, Delta(${deltaMin}-${deltaMax}): ${diagnostic.deltaMatches}.`
+          strategyConfig.minOtmPct * 100
+        )}-${Math.round(strategyConfig.maxOtmPct * 100)}%): ${diagnostic.otmMatches}, Delta(${strategyConfig.deltaMin}-${strategyConfig.deltaMax}): ${diagnostic.deltaMatches}, Liquid: ${diagnostic.liquidityMatches}.`
       : "No qualifying contracts in chain.";
     return {
       strategy,
@@ -228,7 +323,7 @@ export const findStrikeCandidate = (
   const long = selectLongStrike(
     chain.contracts,
     shortResult.strike.strike,
-    side,
+    strategyConfig.side,
     cfg.spreadWidthMin,
     cfg.spreadWidthMax
   );

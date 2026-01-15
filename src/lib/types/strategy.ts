@@ -1,4 +1,8 @@
-import type { Fundamentals, MarketRegime, StrategyType, TrendMetrics } from "@/src/lib/types";
+import type { Fundamentals, MarketRegime, TrendMetrics } from "@/src/lib/types";
+
+export type StrategyType = "CSP" | "PCS" | "CCS" | "CC";
+
+export type OptionSide = "put" | "call";
 
 export type StrategySelectionInput = {
   marketTrend: TrendMetrics;

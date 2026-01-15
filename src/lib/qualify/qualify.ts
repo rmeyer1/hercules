@@ -36,7 +36,9 @@ const buildExpirationCandidates = (
   chain: OptionChainSnapshot,
   underlyingPrice: number,
   strategy: StrategyType,
-  riskFlags: string[]
+  riskFlags: string[],
+  strikeFailureCounts?: Record<string, number>,
+  strikeFailureExamples?: Record<string, string>
 ): ExpirationCandidate[] => {
   const expirations = Array.from(new Set(chain.contracts.map((contract) => contract.expiration)));
   return expirations
@@ -45,7 +47,17 @@ const buildExpirationCandidates = (
       if (dte === null) return null;
       const slice = filterContractsByExpiration(chain, expiration);
       const strike = findStrikeCandidate(slice, underlyingPrice, strategy);
-      if (strike.reasons.length > 0) return null;
+      if (strike.reasons.length > 0) {
+        if (strikeFailureCounts && strikeFailureExamples) {
+          strike.reasons.forEach((reason) => {
+            strikeFailureCounts[reason.code] = (strikeFailureCounts[reason.code] ?? 0) + 1;
+            if (!strikeFailureExamples[reason.code]) {
+              strikeFailureExamples[reason.code] = reason.message;
+            }
+          });
+        }
+        return null;
+      }
       return {
         expiration,
         dte,
@@ -129,9 +141,35 @@ export const qualify = async (request: QualifyRequest): Promise<QualifyResponse>
 
   for (const item of universe.included) {
     try {
+      const strikeFailureCounts: Record<string, number> = {};
+      const strikeFailureExamples: Record<string, string> = {};
+
       const fundamentals = await fmpClient.getFundamentals(item.ticker);
       const quote = await fmpClient.getQuoteSnapshot(item.ticker);
-      if (!quote.price) {
+      let resolvedPrice = quote.price ?? null;
+      let resolvedAvgVolume = quote.avgVolume ?? null;
+
+      if (!resolvedPrice || resolvedPrice <= 0) {
+        try {
+          const trade = await alpacaClient.getLatestTrade(item.ticker);
+          if (trade.price > 0) {
+            resolvedPrice = trade.price;
+          } else {
+            const latestQuote = await alpacaClient.getLatestQuote(item.ticker);
+            const midpoint =
+              latestQuote.bidPrice > 0 && latestQuote.askPrice > 0
+                ? (latestQuote.bidPrice + latestQuote.askPrice) / 2
+                : 0;
+            if (midpoint > 0) {
+              resolvedPrice = midpoint;
+            }
+          }
+        } catch {
+          // Ignore Alpaca fallback errors and use the existing quote data.
+        }
+      }
+
+      if (!resolvedPrice || resolvedPrice <= 0) {
         disqualified.push({ ticker: item.ticker, reasons: ["Missing price data."] });
         continue;
       }
@@ -139,8 +177,8 @@ export const qualify = async (request: QualifyRequest): Promise<QualifyResponse>
       const chain = await alpacaClient.getOptionChainSnapshot(item.ticker);
       const calendar = await calendarProvider.getCalendarSnapshot(item.ticker);
 
-      const marketTrend = neutralTrend(quote.price);
-      const stockTrend = neutralTrend(quote.price);
+      const marketTrend = neutralTrend(resolvedPrice);
+      const stockTrend = neutralTrend(resolvedPrice);
       const selection = selectStrategies({
         marketTrend,
         stockTrend,
@@ -153,9 +191,11 @@ export const qualify = async (request: QualifyRequest): Promise<QualifyResponse>
       for (const strategy of selection.strategies) {
         const expirationCandidates = buildExpirationCandidates(
           chain,
-          quote.price,
+          resolvedPrice,
           strategy,
-          []
+          [],
+          strikeFailureCounts,
+          strikeFailureExamples
         );
         if (expirationCandidates.length === 0) continue;
 
@@ -163,11 +203,11 @@ export const qualify = async (request: QualifyRequest): Promise<QualifyResponse>
 
         for (const rankedExpiration of ranked) {
           const slice = filterContractsByExpiration(chain, rankedExpiration.expiration);
-          const strike = findStrikeCandidate(slice, quote.price, strategy);
+          const strike = findStrikeCandidate(slice, resolvedPrice, strategy);
           if (strike.reasons.length > 0) continue;
 
           const liquidity = evaluateLiquidityGate({
-            avgDailyVolume: quote.avgVolume ?? null,
+            avgDailyVolume: resolvedAvgVolume,
             shortStrike: strike.shortStrike,
             contracts: slice.contracts
           });
@@ -199,9 +239,22 @@ export const qualify = async (request: QualifyRequest): Promise<QualifyResponse>
       }
 
       if (tradeCandidates.length === 0) {
+        const failureSummaries = Object.entries(strikeFailureCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 2)
+          .map(([code, count]) => {
+            const example = strikeFailureExamples[code];
+            return `${code} (${count})${example ? ` — ${example}` : ""}`;
+          })
+          .join(" ");
+
         disqualified.push({
           ticker: item.ticker,
-          reasons: ["No valid strikes found within DTE window."]
+          reasons: [
+            failureSummaries
+              ? `No valid strikes found. ${failureSummaries}`
+              : "No valid strikes found within DTE window."
+          ]
         });
         continue;
       }

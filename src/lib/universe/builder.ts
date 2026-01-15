@@ -50,7 +50,12 @@ const createReason = (
 const isUsListing = (country: string | null) => {
   if (!country) return false;
   const normalized = country.toLowerCase();
-  return normalized === "us" || normalized === "usa" || normalized === "united states";
+  return (
+    normalized === "us" ||
+    normalized === "usa" ||
+    normalized === "united states" ||
+    normalized === "united states of america"
+  );
 };
 
 const detectAdr = (isAdr: boolean | null, currency: string | null, exchange: string | null) => {
@@ -150,7 +155,7 @@ export const buildUniverse = async (request: UniverseBuildRequest): Promise<Univ
     const currency = profile?.currency ?? null;
     const companyName = profile?.companyName ?? null;
 
-    if (profile && !isUsListing(country)) {
+    if (profile && country && !isUsListing(country)) {
       reasons.push(
         createReason("NON_US_LISTING", `Non-US listing detected (${country ?? "unknown"}).`, "EXCLUDE")
       );

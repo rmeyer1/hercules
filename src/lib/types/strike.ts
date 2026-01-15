@@ -18,7 +18,8 @@ export type StrikeFinderConfig = {
   cspDeltaMax: number;
   spreadDeltaMin: number;
   spreadDeltaMax: number;
-  spreadWidth: number;
+  spreadWidthMin: number;
+  spreadWidthMax: number;
 };
 
 export type StrikeCandidate = {
